@@ -3,55 +3,51 @@ import os
 
 
 def get_base_file():
-    """Name of the SQLite DB file"""
+    """Get the same base filename"""
     return os.path.splitext(os.path.basename(__file__))[0]
 
 
 def connect_db():
-    """
-    Create and return an SQLite database connection.
-
-    Args:
-        db_name (str): Name of the database file to create/connect to
-
-    Returns:
-        sqlite3.Connection: SQLite database connection object
-    """
+    """Connect or Create to a database"""
     try:
         dbfile = get_base_file() + ".db"
         conn = sqlite3.connect(dbfile, timeout=2)
-        print(f"Successfully created SQLite instance: {dbfile}")
+        print(f"Successfully connected SQLite instance: {dbfile}")
         return conn
     except sqlite3.Error as e:
         print(f"Error creating SQLite instance: {e}")
         return None
 
 
-def query_database(conn, query, args):
-    """
-    Query the master database (sqlite_master table) for the SQLite instance.
-
-    Args:
-        conn (sqlite3.Connection): SQLite database connection object
-        query (str): SQL query to execute
-        args (tuple): Arguments to pass to the query
-
-    Returns:
-        boolean TRUE or FALSE
-    """
-    result = False
-
+def query_database(query, args="", table="files"):
+    """Query the database for changes"""
+    conn = connect_db()
     if conn is None:
         print("Error: No database connection provided")
-        return result
-
+        return False
     try:
         cursor = conn.cursor()
-        cursor.execute(query, args)
-        rows = cursor.fetchall()
-        numrows = len(list(rows))
-        if numrows > 0:
-            result = True
+        if check_table(table):
+            cursor.execute(query, args)
+    except sqlite3.Error as e:
+        print(f"Error querying master database: {e}")
+        if cursor != None:
+            cursor.close()
+    finally:
+        conn.commit()
+        if cursor != None:
+            cursor.close()
+
+
+def fetch_database(query, args=""):
+    """Fetch results to display"""
+    conn = connect_db()
+    if conn == None:
+        print("Error: No database connection provided")
+        return False
+    try:
+        cursor = conn.cursor()
+        result = cursor.execute(query, args).fetchall()
     except sqlite3.Error as e:
         print(f"Error querying master database: {e}")
         if cursor != None:
@@ -59,30 +55,85 @@ def query_database(conn, query, args):
     finally:
         if cursor != None:
             cursor.close()
-    return result
+        return result
+
+
+def list_tables():
+    """Show all tables"""
+    query = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    tables = fetch_database(query)
+    if len(tables) > 1:
+        print("Tables in database:")
+        print("-" * 40)
+        for table in tables:
+            table_name = table[0]
+            if not table_name.startswith("sqlite_"):
+                print(f"  - {table_name}")
+
+        # return [table[0] for table in tables if not table[0].startswith("sqlite_")]
+    else:
+        print("There are no tables")
 
 
 def check_table(table):
     """Checks if a SQLite DB Table exists"""
-    result = False
-    conn = connect_db()
-    try:
-        if not conn is None:
-            query = "SELECT * FROM sqlite_master WHERE type='table' AND name=?"
-            args = (table,)
-            result = query_database(conn, query, args)
-            if conn != None:
-                conn.close()
-    except sqlite3.Error as e:
-        print(f"Error querying master database: {e}")
-        if conn is not None:
-            conn.close()
-    return result
+    query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+    return len(fetch_database(query, (table,)))
 
 
-# Example usage
-if __name__ == "__main__":
+def get_column_names(table_name="files"):
+    """Check the columns for the table"""
+    query = f"PRAGMA table_info({table_name})"
+    columns = fetch_database(query)
+    return [col[1] for col in columns]
 
-    # Check if the table exists
-    result = check_table("users")
-    print("Table exists:", result is not None)
+
+def delete_table(table):
+    """Deletes a SQLite DB Table"""
+    query = f"DROP TABLE IF EXISTS {table}"
+    query_database(query)
+
+
+def create_hashtable(table="files"):
+    """Creates a SQLite DB Table"""
+    query = f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+           file TEXT,
+           md5 TEXT
+    )"""
+    query_database(query)
+
+
+def create_hashtable_idx(table="files"):
+    """Creates a SQLite DB Table Index"""
+    query = f"""
+    CREATE INDEX IF NOT EXISTS idx_{table} 
+    ON {table} (file, md5)"""
+    query_database(query)
+
+
+def update_hashtable(file, md5, table="files"):
+    """Update MD5 hash for a file"""
+    query = "UPDATE files SET md5=? WHERE file=?"
+    args = (md5, file)
+    query_database(query, args)
+
+
+def insert_hashtable(file, md5, table="files"):
+    """Insert file into the Files table"""
+    query = f"INSERT INTO {table} (file, md5) VALUES (?, ?)"
+    args = (file, md5)
+    query_database(query, args)
+
+
+def setup_hashtable(file, md5, table="files"):
+    """Setup the Files table"""
+    create_hashtable(table)
+    create_hashtable_idx(table)
+    insert_hashtable(file, md5, table)
+
+
+def md5indb(file, table="files"):
+    """Check md5 hash exists"""
+    query = f"SELECT md5 FROM {table} WHERE file={file}"
+    return fetch_database(query)
