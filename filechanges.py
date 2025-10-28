@@ -1,5 +1,7 @@
 import sqlite3
 import os
+import hashlib
+from datetime import datetime
 
 
 def get_base_file():
@@ -114,7 +116,7 @@ def create_hashtable_idx(table="files"):
 
 def update_hashtable(file, md5, table="files"):
     """Update MD5 hash for a file"""
-    query = "UPDATE files SET md5=? WHERE file=?"
+    query = f"UPDATE {table} SET md5=? WHERE file=?"
     args = (md5, file)
     query_database(query, args)
 
@@ -137,3 +139,33 @@ def md5indb(file, table="files"):
     """Check md5 hash exists"""
     query = f"SELECT md5 FROM {table} WHERE file={file}"
     return fetch_database(query)
+
+
+def haschanged(file, md5, table="files"):
+    """Check if file has changed"""
+    current_md5 = md5indb(file, table)
+    if current_md5 != md5:
+        update_hashtable(file, md5, table)
+    else:
+        insert_hashtable(file, md5, table)
+
+
+def get_fileext(file):
+    """Get the file extension"""
+    return os.path.splitext(file)[1]
+
+
+def get_moddate(file):
+    """Get the file modified date"""
+    try:
+        mtime = os.path.getmtime(file)
+        # return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+    except OSError as e:
+        print(f"Error getting modified date for {file}: {e}")
+        mtime = 0
+    return mtime
+
+
+def md5short(file):
+    """Get md5 file hash tag"""
+    return hashlib.md5(str(file + "|" + get_moddate(file)).encode("utf-8")).hexdigest()
