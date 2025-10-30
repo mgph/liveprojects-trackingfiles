@@ -169,3 +169,49 @@ def get_moddate(file):
 def md5short(file):
     """Get md5 file hash tag"""
     return hashlib.md5(str(file + "|" + get_moddate(file)).encode("utf-8")).hexdigest()
+
+
+def check_filechanges(folder, exclude, ws):
+    changed = False
+    for subdir, dirs, files in os.walk(folder):
+        for file in files:
+            origin = os.path.join(subdir, file)
+            if os.path.isfile(origin):
+                file_ext = get_fileext(file)
+                if not file_ext in exclude:
+                    md5 = md5short(file)
+                    # later
+                    if haschanged(file, md5):
+                        # later
+                        print(f"{origin} has changed")
+                        changed = True
+    return changed
+
+
+def load_folders():
+    folders = []
+    extensions = []
+    config = get_base_file() + ".ini"
+    if os.path.isfile(config):
+        cfile = open(config, "r")
+        for line in cfile.readlines():
+            if "|" in line:
+                folders.append(line.split("|")[0])
+                exts = line.split("|")[1]
+                if len(exts) > 0:
+                    extl = exts.split(",")
+                    extensions.append(extl)
+            else:
+                folders.append(line)
+                extensions.append([])
+        cfile.close()
+    return folders, extensions
+
+
+def run_filechanges(ws):
+    changed = False
+    folders_exts = load_folders()
+    for i, folder in enumerate(folders_exts[0]):
+        exts = folders_exts[1]
+        changed = check_filechanges(folder, exts[i], ws)
+    return changed
