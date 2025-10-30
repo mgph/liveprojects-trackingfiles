@@ -2,6 +2,7 @@ import sqlite3
 import os
 import hashlib
 from datetime import datetime
+import sys
 
 
 def get_base_file():
@@ -215,3 +216,27 @@ def run_filechanges(ws):
         exts = folders_exts[1]
         changed = check_filechanges(folder, exts[i], ws)
     return changed
+
+
+def execute(args):
+    changes = 0
+    if len(args) > 1:
+        if args[1].lower() == "--loop":
+            # later
+            try:
+                while True:
+                    ws = None
+                    if run_filechanges(ws):
+                        changes += 1
+            except KeyboardInterrupt:
+                print("Stopped...")
+                if changes > 0:
+                    print(changes)
+    else:
+        ws = None
+        if run_filechanges(ws):
+            print(changes)
+
+
+if __name__ == "__main__":
+    execute(sys.argv)
