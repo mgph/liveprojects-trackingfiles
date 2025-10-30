@@ -3,6 +3,9 @@ import os
 import hashlib
 from datetime import datetime
 import sys
+from openpyxl import Workbook
+from openpyxl.styles import Font
+import socket
 
 
 def get_base_file():
@@ -181,10 +184,12 @@ def check_filechanges(folder, exclude, ws):
                 file_ext = get_fileext(file)
                 if not file_ext in exclude:
                     md5 = md5short(file)
-                    # later
+                    header_xlsreport(ws)
                     if haschanged(file, md5):
-                        # later
-                        print(f"{origin} has changed")
+                        now = get_datetime("%d-%d-%Y %H:%M:%S")
+                        dt = now.split(" ")
+                        row_xlsreport(ws, file, origin, subdir, dt[0], dt[1])
+                        print(f"{origin} has changed on {now}")
                         changed = True
     return changed
 
@@ -222,10 +227,9 @@ def execute(args):
     changes = 0
     if len(args) > 1:
         if args[1].lower() == "--loop":
-            # later
+            wb, ws, st = start_xlsreport()
             try:
                 while True:
-                    ws = None
                     if run_filechanges(ws):
                         changes += 1
             except KeyboardInterrupt:
@@ -233,9 +237,67 @@ def execute(args):
                 if changes > 0:
                     print(changes)
     else:
-        ws = None
+        wb, ws, st = start_xlsreport()
         if run_filechanges(ws):
-            print(changes)
+            end_xlsreport(wb, st)
+
+
+def get_datetime(format):
+    today = datetime.today()
+    return today.strftime(format)
+
+
+def start_xlsreport():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = socket.gethostname()
+    st = get_datetime("%d-%b-%Y %H_%M_%S")
+    return wb, ws, st
+
+
+def end_xlsreport(wb, st):
+    dt = f' from {st} to {get_datetime("%d-%b-%Y %H_%M_%S")}'
+    file = get_base_file() + dt + ".xlsx"
+    wb.save(file)
+
+
+def header_xlsreport(ws):
+    ws.cell(row=1, column=1, value="File Name")
+    ws.cell(row=1, column=2, value="Full File Name")
+    ws.cell(row=1, column=3, value="Folder Name")
+    ws.cell(row=1, column=4, value="Date")
+    ws.cell(row=1, column=5, value="Time")
+
+    a1 = ws["A1"]
+    b1 = ws["B1"]
+    c1 = ws["C1"]
+    d1 = ws["D1"]
+    e1 = ws["E1"]
+
+    a1.font = Font(color="000000", bold=True)
+    b1.font = Font(color="000000", bold=True)
+    c1.font = Font(color="000000", bold=True)
+    d1.font = Font(color="000000", bold=True)
+    e1.font = Font(color="000000", bold=True)
+
+
+def get_lastrow(ws):
+    row = 1
+    for cell in ws["A"]:
+        if cell.value is None:
+            break
+        else:
+            row += 1
+    return row
+
+
+def row_xlsreport(ws, file, ffilename, folder, d, t):
+    row = get_lastrow(ws)
+    ws.cell(row=row, column=1, value=file)
+    ws.cell(row=row, column=2, value=ffilename)
+    ws.cell(row=row, column=3, value=folder)
+    ws.cell(row=row, column=4, value=d)
+    ws.cell(row=row, column=5, value=t)
 
 
 if __name__ == "__main__":
