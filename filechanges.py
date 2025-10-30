@@ -7,6 +7,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 import socket
 
+DB_CONN = None
+
 
 def get_base_file():
     """Get the same base filename"""
@@ -15,14 +17,23 @@ def get_base_file():
 
 def connect_db():
     """Connect or Create to a database"""
-    try:
-        dbfile = get_base_file() + ".db"
-        conn = sqlite3.connect(dbfile, timeout=2)
-        print(f"Successfully connected SQLite instance: {dbfile}")
-        return conn
-    except sqlite3.Error as e:
-        print(f"Error creating SQLite instance: {e}")
-        return None
+    global DB_CONN
+    if DB_CONN is None:
+        try:
+            dbfile = get_base_file() + ".db"
+            DB_CONN = sqlite3.connect(dbfile, timeout=2)
+            print(f"Successfully connected SQLite instance: {dbfile}")
+        except sqlite3.Error as e:
+            print(f"Error creating SQLite instance: {e}")
+            return None
+    return DB_CONN
+
+
+def close_db():
+    global DB_CONN
+    if DB_CONN:
+        DB_CONN.close()
+        DB_CONN = None
 
 
 def query_database(query, args="", table="files"):
@@ -33,8 +44,7 @@ def query_database(query, args="", table="files"):
         return False
     try:
         cursor = conn.cursor()
-        if check_table(table):
-            cursor.execute(query, args)
+        cursor.execute(query, args)
     except sqlite3.Error as e:
         print(f"Error querying master database: {e}")
         if cursor != None:
@@ -48,7 +58,8 @@ def query_database(query, args="", table="files"):
 def fetch_database(query, args=""):
     """Fetch results to display"""
     conn = connect_db()
-    if conn == None:
+    result = 0
+    if conn is None:
         print("Error: No database connection provided")
         return False
     try:
@@ -61,24 +72,37 @@ def fetch_database(query, args=""):
     finally:
         if cursor != None:
             cursor.close()
-        return result
+    return result
 
 
 def list_tables():
     """Show all tables"""
     query = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     tables = fetch_database(query)
-    if len(tables) > 1:
+    if len(tables) > 0:
         print("Tables in database:")
         print("-" * 40)
         for table in tables:
             table_name = table[0]
-            if not table_name.startswith("sqlite_"):
-                print(f"  - {table_name}")
+            # if not table_name.startswith("sqlite_"):
+            print(f"  - {table_name}")
 
         # return [table[0] for table in tables if not table[0].startswith("sqlite_")]
     else:
         print("There are no tables")
+
+
+def list_files(table="files"):
+    """Show all files"""
+    query = f"SELECT file, md5 from {table}"
+    files = fetch_database(query)
+    if len(files) > 0:
+        print(f"{len(files)} Files in database:")
+        print("-" * 40)
+        for file in files:
+            print(file)
+    else:
+        print("There are no files")
 
 
 def check_table(table):
@@ -122,13 +146,22 @@ def update_hashtable(file, md5, table="files"):
     """Update MD5 hash for a file"""
     query = f"UPDATE {table} SET md5=? WHERE file=?"
     args = (md5, file)
-    query_database(query, args)
+    if check_table(table):
+        query_database(query, args)
+    else:
+        setup_hashtable(file, md5, table)
 
 
 def insert_hashtable(file, md5, table="files"):
     """Insert file into the Files table"""
     query = f"INSERT INTO {table} (file, md5) VALUES (?, ?)"
     args = (file, md5)
+    query_database(query, args)
+
+
+def delete_rows(query, args, table="files"):
+    # query = f"DELETE FROM {table} WHERE file LIKE ?"
+    # args = ("%.xlsx",)
     query_database(query, args)
 
 
@@ -141,17 +174,21 @@ def setup_hashtable(file, md5, table="files"):
 
 def md5indb(file, table="files"):
     """Check md5 hash exists"""
-    query = f"SELECT md5 FROM {table} WHERE file={file}"
-    return fetch_database(query)
+    query = f"SELECT md5 FROM {table} WHERE file=?"
+    return fetch_database(query, (file,))
 
 
 def haschanged(file, md5, table="files"):
     """Check if file has changed"""
     current_md5 = md5indb(file, table)
-    if current_md5 != md5:
-        update_hashtable(file, md5, table)
-    else:
+    if not current_md5:
         insert_hashtable(file, md5, table)
+        return True
+    elif current_md5[0][0] != md5:
+        update_hashtable(file, md5, table)
+        return True
+    else:
+        return False
 
 
 def get_fileext(file):
@@ -167,7 +204,7 @@ def get_moddate(file):
     except OSError as e:
         print(f"Error getting modified date for {file}: {e}")
         mtime = 0
-    return mtime
+    return str(mtime)
 
 
 def md5short(file):
@@ -178,13 +215,15 @@ def md5short(file):
 def check_filechanges(folder, exclude, ws):
     changed = False
     for subdir, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        files[:] = [f for f in files if not f.startswith(".")]
         for file in files:
             origin = os.path.join(subdir, file)
             if os.path.isfile(origin):
                 file_ext = get_fileext(file)
                 if not file_ext in exclude:
                     md5 = md5short(file)
-                    header_xlsreport(ws)
+
                     if haschanged(file, md5):
                         now = get_datetime("%d-%d-%Y %H:%M:%S")
                         dt = now.split(" ")
@@ -201,14 +240,19 @@ def load_folders():
     if os.path.isfile(config):
         cfile = open(config, "r")
         for line in cfile.readlines():
+            line = line.strip()
             if "|" in line:
-                folders.append(line.split("|")[0])
+                folder_path = os.path.abspath(line.split("|")[0])
+                if folder_path not in folders:
+                    folders.append(folder_path)
                 exts = line.split("|")[1]
                 if len(exts) > 0:
                     extl = exts.split(",")
                     extensions.append(extl)
             else:
-                folders.append(line)
+                folder_path = os.path.abspath(line.split("|")[0])
+                if folder_path not in folders:
+                    folders.append(folder_path)
                 extensions.append([])
         cfile.close()
     return folders, extensions
@@ -252,6 +296,7 @@ def start_xlsreport():
     ws = wb.active
     ws.title = socket.gethostname()
     st = get_datetime("%d-%b-%Y %H_%M_%S")
+    header_xlsreport(ws)
     return wb, ws, st
 
 
@@ -259,6 +304,7 @@ def end_xlsreport(wb, st):
     dt = f' from {st} to {get_datetime("%d-%b-%Y %H_%M_%S")}'
     file = get_base_file() + dt + ".xlsx"
     wb.save(file)
+    close_db()
 
 
 def header_xlsreport(ws):
@@ -302,3 +348,7 @@ def row_xlsreport(ws, file, ffilename, folder, d, t):
 
 if __name__ == "__main__":
     execute(sys.argv)
+    # create_hashtable()
+    # delete_table("files")
+    list_tables()
+    list_files()
